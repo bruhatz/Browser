@@ -1,0 +1,9 @@
+{
+    "name": "Ubuntu Noble with GUI Tools",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "containerEnv": {
+        "DISPLAY": ":1.0"
+    }
+}
