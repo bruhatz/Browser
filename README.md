@@ -67,6 +67,10 @@ A codespace configured so GUI applications can render their output in a browser.
 ### Install Instructions 
 
 In order to use this devcontainer include it as a sub module when working in a generic codespace.
+> [!WARNING]
+> If you just created a new blank codespace you might need to initialize git first.
+> 
+>     git init
 
     git submodule add https://github.com/raymond-chetty/codespaces-GUI-CE .devcontainer
 
