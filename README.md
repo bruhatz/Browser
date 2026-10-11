@@ -12,9 +12,17 @@ This dev container runs Google Chrome on a virtual X11 display and streams the d
 
 ## Open the Chrome desktop
 
-The X display, VNC server, noVNC browser client, and Chrome start automatically when the Codespace starts. Codespaces forwards port 6080 and opens the desktop page in a browser. If needed, open the **Chrome desktop** port and visit `/vnc.html`.
+The X display, VNC server, noVNC browser client, and Chrome start automatically when the Codespace starts. Chrome opens horizontally centered on the 1280-pixel virtual display. Codespaces forwards port 6080 and opens the desktop page in a browser. The page asks whether you want to switch to desktop mode. Choose **OK** for the standard noVNC viewer, or **Cancel** to use the mobile trackpad on the same page.
 
-The forwarded port is configured as **public**, so anyone with its URL can view and control the desktop. Do not use this configuration for private browsing or sensitive accounts. Chrome runs as the non-root `vscode` user; `--no-sandbox` is required by the Codespaces container environment.
+In trackpad mode, one-finger movement moves the desktop pointer, a tap left-clicks, a 500 ms hold right-clicks, and two-finger movement scrolls in the natural trackpad direction. The noVNC keyboard, full-screen, and display settings remain available in the viewer toolbar.
+
+To start the desktop manually, type:
+
+    start
+
+If `start` is not available or reports missing desktop dependencies, rebuild the dev container (**Codespaces: Rebuild Container** from the Command Palette).
+
+Only the Chrome desktop port (6080) is forwarded, and it is configured as **public**. The underlying VNC port (5900) listens only on localhost and is not forwarded separately. Anyone with the desktop URL can view and control Chrome, so do not use it for private browsing or sensitive accounts. Chrome runs as the non-root `vscode` user; `--no-sandbox` is required by the Codespaces container environment.
 
 ## Install in a Project
 

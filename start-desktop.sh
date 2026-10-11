@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+for command in Xvfb x11vnc google-chrome; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        echo "$command is not installed; rebuild the dev container to install desktop dependencies" >&2
+        exit 1
+    fi
+done
+
+if [[ ! -x /usr/share/novnc/utils/novnc_proxy ]]; then
+    echo "noVNC is not installed; rebuild the dev container to install desktop dependencies" >&2
+    exit 1
+fi
+
 wait_for_socket() {
     local socket_path=$1
     local process_name=$2
@@ -43,7 +55,7 @@ fi
 wait_for_socket /tmp/.X11-unix/X1 Xvfb
 
 if ! pgrep -x x11vnc >/dev/null; then
-    nohup x11vnc -display :1 -forever -nopw >/tmp/x11vnc.log 2>&1 </dev/null &
+    nohup x11vnc -display :1 -forever -nopw -localhost >/tmp/x11vnc.log 2>&1 </dev/null &
 fi
 wait_for_port 5900 x11vnc
 
@@ -54,6 +66,7 @@ wait_for_port 6080 '[n]ovnc_proxy.*--vnc localhost:5900'
 
 if ! pgrep -u "$(id -u)" -f '[g]oogle-chrome.*--no-sandbox' >/dev/null; then
     nohup google-chrome --no-sandbox --disable-dev-shm-usage --no-first-run --no-default-browser-check \
+        --window-size=1000,760 --window-position=140,0 \
         >/tmp/chrome.log 2>&1 </dev/null &
     for _ in {1..30}; do
         pgrep -u "$(id -u)" -f '[g]oogle-chrome.*--no-sandbox' >/dev/null && exit 0

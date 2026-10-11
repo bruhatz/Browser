@@ -7,7 +7,7 @@
         "DISPLAY": ":1.0"
     },
     "forwardPorts": [6080],
-    "postStartCommand": "start-desktop",
+    "postAttachCommand": "start-desktop",
     "portsAttributes": {
         "6080": {
             "label": "Chrome desktop",

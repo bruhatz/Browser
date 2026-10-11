@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Chrome desktop — trackpad</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font: 16px/1.4 system-ui, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100%;
+            height: 100vh;
+            height: 100dvh;
+            margin: 0;
+            overflow: hidden;
+            background: #17191d;
+            color: #f5f5f5;
+        }
+
+        #viewer {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        #noVNC {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: 0;
+        }
+
+        #trackpad {
+            position: absolute;
+            display: none;
+            cursor: none;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #status {
+            position: fixed;
+            z-index: 5;
+            top: 0.75rem;
+            left: 50%;
+            max-width: calc(100vw - 1.5rem);
+            padding: 0.5rem 0.75rem;
+            transform: translateX(-50%);
+            border: 1px solid #656b78;
+            border-radius: 0.5rem;
+            background: #17191d;
+        }
+    </style>
+    <script>
+        if (window.confirm("Switch to desktop mode? Choose Cancel to use trackpad mode.")) {
+            window.location.replace("/vnc.html");
+        }
+    </script>
+</head>
+<body>
+    <main id="viewer" aria-label="noVNC remote desktop">
+        <iframe id="noVNC" src="/vnc.html" title="noVNC remote desktop"></iframe>
+        <div id="trackpad" role="application" aria-label="Trackpad. Move one finger to move the pointer, tap to click, hold to right-click, and move two fingers to scroll."></div>
+    </main>
+    <span id="status" role="status" aria-live="polite" hidden></span>
+
+    <script>
+        const viewer = document.getElementById("viewer");
+        const frame = document.getElementById("noVNC");
+        const pad = document.getElementById("trackpad");
+        const status = document.getElementById("status");
+        const contacts = new Map();
+        const fullscreenButtons = new WeakSet();
+        let pointer = null;
+        let heldButtons = 0;
+        let moved = false;
+        let gesture = false;
+        let previousPadY = 0;
+        let observedCanvas = null;
+        let resizeObserver = null;
+        let mutationObserver = null;
+
+        function showError(message) {
+            status.textContent = message;
+            status.hidden = false;
+        }
+
+        function releaseButtons() {
+            for (const mask of [1, 2, 4]) {
+                if (heldButtons & mask) {
+                    setButton(mask, false);
+                }
+            }
+        }
+
+        function getCanvas() {
+            try {
+                return frame.contentDocument?.querySelector("#noVNC_container canvas") ?? null;
+            } catch (error) {
+                showError(`Unable to access the noVNC viewer: ${error.message}`);
+                return null;
+            }
+        }
+
+        function updateTrackpad() {
+            const target = getCanvas();
+            const frameWindow = frame.contentWindow;
+            const frameRect = frame.getBoundingClientRect();
+            const viewerRect = viewer.getBoundingClientRect();
+            if (!target || !frameWindow || !target.getBoundingClientRect) {
+                pad.style.display = "none";
+                return;
+            }
+
+            const canvasRect = target.getBoundingClientRect();
+            if (!canvasRect.width || !canvasRect.height) {
+                pad.style.display = "none";
+                return;
+            }
+
+            if (target !== observedCanvas) {
+                if (resizeObserver && observedCanvas) {
+                    resizeObserver.unobserve(observedCanvas);
+                }
+                observedCanvas = target;
+                resizeObserver?.observe(target);
+                releaseButtons();
+                pointer = null;
+            }
+
+            const scaleX = frameRect.width / frameWindow.innerWidth;
+            const scaleY = frameRect.height / frameWindow.innerHeight;
+            pad.style.left = `${frameRect.left - viewerRect.left + canvasRect.left * scaleX}px`;
+            pad.style.top = `${frameRect.top - viewerRect.top + canvasRect.top * scaleY}px`;
+            pad.style.width = `${canvasRect.width * scaleX}px`;
+            pad.style.height = `${canvasRect.height * scaleY}px`;
+            pad.style.display = "block";
+
+            if (!pointer) {
+                pointer = {
+                    x: canvasRect.left + canvasRect.width / 2,
+                    y: canvasRect.top + canvasRect.height / 2
+                };
+            } else {
+                pointer.x = Math.max(canvasRect.left, Math.min(canvasRect.right - 1, pointer.x));
+                pointer.y = Math.max(canvasRect.top, Math.min(canvasRect.bottom - 1, pointer.y));
+            }
+        }
+
+        function dispatchMouse(type, button, buttons) {
+            const target = getCanvas();
+            const frameWindow = frame.contentWindow;
+            if (!target || !frameWindow || !pointer) {
+                return;
+            }
+
+            target.focus();
+            const bounds = target.getBoundingClientRect();
+            const x = Math.max(bounds.left, Math.min(bounds.right - 1, pointer.x));
+            const y = Math.max(bounds.top, Math.min(bounds.bottom - 1, pointer.y));
+            target.dispatchEvent(new frameWindow.MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                clientX: x,
+                clientY: y,
+                button,
+                buttons
+            }));
+        }
+
+        function setButton(mask, down) {
+            const nextButtons = down ? heldButtons | mask : heldButtons & ~mask;
+            if (nextButtons === heldButtons) {
+                return;
+            }
+            const button = mask === 1 ? 0 : mask === 2 ? 2 : 1;
+            heldButtons = nextButtons;
+            dispatchMouse(down ? "mousedown" : "mouseup", button, heldButtons);
+        }
+
+        function clickButton(mask) {
+            try {
+                setButton(mask, true);
+                setButton(mask, false);
+            } finally {
+                releaseButtons();
+            }
+        }
+
+        function movePointer(dx, dy) {
+            const target = getCanvas();
+            if (!target) {
+                return;
+            }
+            const bounds = target.getBoundingClientRect();
+            if (!pointer) {
+                pointer = {
+                    x: bounds.left + bounds.width / 2,
+                    y: bounds.top + bounds.height / 2
+                };
+            }
+            pointer.x = Math.max(bounds.left, Math.min(bounds.right - 1, pointer.x + dx * 1.5));
+            pointer.y = Math.max(bounds.top, Math.min(bounds.bottom - 1, pointer.y + dy * 1.5));
+            dispatchMouse("mousemove", -1, heldButtons);
+        }
+
+        function sendScroll(deltaY) {
+            const target = getCanvas();
+            const frameWindow = frame.contentWindow;
+            if (!target || !frameWindow || !pointer) {
+                return;
+            }
+            target.focus();
+            target.dispatchEvent(new frameWindow.WheelEvent("wheel", {
+                bubbles: true,
+                cancelable: true,
+                clientX: pointer.x,
+                clientY: pointer.y,
+                deltaY: -deltaY * 2
+            }));
+        }
+
+        function elementAtPoint(event) {
+            const frameRect = frame.getBoundingClientRect();
+            const frameWindow = frame.contentWindow;
+            if (!frameWindow || !frameRect.width || !frameRect.height) {
+                return null;
+            }
+            const x = (event.clientX - frameRect.left) * frameWindow.innerWidth / frameRect.width;
+            const y = (event.clientY - frameRect.top) * frameWindow.innerHeight / frameRect.height;
+            return frame.contentDocument.elementFromPoint(x, y);
+        }
+
+        pad.addEventListener("pointerdown", (event) => {
+            const target = elementAtPoint(event);
+            if (!target) {
+                return;
+            }
+            event.preventDefault();
+            pad.setPointerCapture(event.pointerId);
+            contacts.set(event.pointerId, {
+                x: event.clientX,
+                y: event.clientY,
+                startX: event.clientX,
+                startY: event.clientY,
+                target: target === getCanvas() ? null : target
+            });
+            if (contacts.size > 1) {
+                gesture = true;
+                moved = true;
+                for (const contact of contacts.values()) {
+                    clearTimeout(contact.holdTimer);
+                    contact.holdTimer = null;
+                    if (contact.rightClick) {
+                        contact.rightClick = false;
+                        setButton(2, false);
+                    }
+                }
+                previousPadY = [...contacts.values()].reduce((sum, contact) => sum + contact.y, 0) / contacts.size;
+            } else if (!contacts.get(event.pointerId).target) {
+                const contact = contacts.get(event.pointerId);
+                contact.holdTimer = setTimeout(() => {
+                    const activeContact = contacts.get(event.pointerId);
+                    if (activeContact && !activeContact.moved && contacts.size === 1) {
+                        activeContact.rightClick = true;
+                        clickButton(2);
+                    }
+                }, 500);
+            }
+            if (!contacts.get(event.pointerId).target) {
+                getCanvas()?.focus();
+            }
+        });
+
+        pad.addEventListener("pointermove", (event) => {
+            if (!contacts.has(event.pointerId)) {
+                return;
+            }
+            event.preventDefault();
+            const previous = contacts.get(event.pointerId);
+            const contact = { ...previous, x: event.clientX, y: event.clientY };
+            contacts.set(event.pointerId, contact);
+
+            if (previous.target) {
+                if (Math.abs(event.clientX - previous.startX) + Math.abs(event.clientY - previous.startY) > 8) {
+                    moved = true;
+                    contact.moved = true;
+                }
+                return;
+            }
+            if (contacts.size > 1) {
+                gesture = true;
+                moved = true;
+                const centerY = [...contacts.values()].reduce((sum, contact) => sum + contact.y, 0) / contacts.size;
+                const deltaY = centerY - previousPadY;
+                previousPadY = centerY;
+                if (deltaY !== 0) {
+                    sendScroll(deltaY);
+                }
+                return;
+            }
+
+            const dx = event.clientX - previous.x;
+            const dy = event.clientY - previous.y;
+            if (Math.abs(dx) + Math.abs(dy) > 2) {
+                moved = true;
+                contact.moved = true;
+            }
+            if (contact.moved && contact.holdTimer) {
+                clearTimeout(contact.holdTimer);
+                contact.holdTimer = null;
+            }
+            movePointer(dx, dy);
+        });
+
+        function finishContact(event, allowTap) {
+            if (!contacts.has(event.pointerId)) {
+                return;
+            }
+            event.preventDefault();
+            const contact = contacts.get(event.pointerId);
+            contacts.delete(event.pointerId);
+            clearTimeout(contact.holdTimer);
+            if (allowTap && contact.target && !moved &&
+                    Math.abs(event.clientX - contact.startX) + Math.abs(event.clientY - contact.startY) <= 8) {
+                contact.target.click();
+            }
+            if (contacts.size === 0) {
+                if (allowTap && !contact.target && !contact.rightClick && !moved && !gesture && heldButtons === 0) {
+                    clickButton(1);
+                }
+                releaseButtons();
+                moved = false;
+                gesture = false;
+            }
+        }
+
+        function cancelContacts() {
+            for (const contact of contacts.values()) {
+                clearTimeout(contact.holdTimer);
+            }
+            contacts.clear();
+            releaseButtons();
+            moved = false;
+            gesture = false;
+        }
+
+        function handleWindowBlur() {
+            if (document.activeElement === frame && document.hasFocus()) {
+                return;
+            }
+            cancelContacts();
+        }
+
+        pad.addEventListener("pointerup", (event) => finishContact(event, true));
+        pad.addEventListener("pointercancel", (event) => finishContact(event, false));
+        pad.addEventListener("contextmenu", (event) => event.preventDefault());
+        pad.addEventListener("lostpointercapture", (event) => {
+            if (contacts.has(event.pointerId)) {
+                cancelContacts();
+            }
+        });
+        window.addEventListener("blur", handleWindowBlur);
+        window.addEventListener("pagehide", cancelContacts);
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                cancelContacts();
+            }
+        });
+
+        function toggleFullscreen(event) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            const action = document.fullscreenElement
+                ? document.exitFullscreen()
+                : document.documentElement.requestFullscreen();
+            action.catch((error) => {
+                showError(`Unable to change full-screen mode: ${error.message}`);
+            });
+        }
+
+        function updateFullscreenButton() {
+            const button = frame.contentDocument?.getElementById("noVNC_fullscreen_button");
+            button?.classList.toggle("noVNC_selected", Boolean(document.fullscreenElement));
+        }
+
+        function connectViewerObservers() {
+            const document = frame.contentDocument;
+            if (!document) {
+                return;
+            }
+            resizeObserver?.disconnect();
+            mutationObserver?.disconnect();
+            resizeObserver = new ResizeObserver(updateTrackpad);
+            mutationObserver = new MutationObserver(() => {
+                updateTrackpad();
+                attachFullscreenHandler(document);
+            });
+            resizeObserver.observe(frame);
+            mutationObserver.observe(document.documentElement, {
+                attributes: true,
+                childList: true,
+                subtree: true
+            });
+            document.addEventListener("contextmenu", (event) => event.preventDefault());
+            document.addEventListener("scroll", updateTrackpad, true);
+            frame.contentWindow.addEventListener("resize", updateTrackpad);
+            attachFullscreenHandler(document);
+            updateTrackpad();
+        }
+
+        function attachFullscreenHandler(document) {
+            const fullscreenButton = document.getElementById("noVNC_fullscreen_button");
+            if (fullscreenButton && !fullscreenButtons.has(fullscreenButton)) {
+                fullscreenButtons.add(fullscreenButton);
+                fullscreenButton.addEventListener("click", toggleFullscreen, true);
+            }
+        }
+
+        frame.addEventListener("load", connectViewerObservers);
+        window.addEventListener("resize", updateTrackpad);
+        window.addEventListener("focus", updateTrackpad);
+        document.addEventListener("fullscreenchange", () => {
+            updateTrackpad();
+            updateFullscreenButton();
+        });
+    </script>
+</body>
+</html>
