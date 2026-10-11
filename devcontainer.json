@@ -1,9 +1,18 @@
 {
-    "name": "Ubuntu Noble with GUI Tools",
+    "name": "Ubuntu Noble with Chrome GUI",
     "build": {
         "dockerfile": "Dockerfile"
     },
     "containerEnv": {
         "DISPLAY": ":1.0"
+    },
+    "forwardPorts": [6080],
+    "postStartCommand": "start-desktop",
+    "portsAttributes": {
+        "6080": {
+            "label": "Chrome desktop",
+            "onAutoForward": "openBrowser",
+            "visibility": "public"
+        }
     }
 }
